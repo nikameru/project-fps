@@ -41,6 +41,12 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Sliding")]
     public float slidingSpeed;
+    public float slideSpeedChangeFactor;
+
+    public float slideScaleY;
+    private float startScaleY;
+
+    private bool isAbleToSlide;
 
     [Header("Keybinds")]
     public KeyCode jumpKey = KeyCode.Space;
@@ -50,9 +56,6 @@ public class PlayerMovement : MonoBehaviour
     [Header("Ground Check")]
     public float playerHeight;
     public LayerMask groundLayer;
-
-    bool isOnGround;
-    bool isDashing;
 
     float horizontalInput, verticalInput;
 
@@ -79,6 +82,12 @@ public class PlayerMovement : MonoBehaviour
 
     public PlayerState state;
 
+    bool isOnGround;
+    bool wasOnGround;
+    bool isJumping;
+    bool isDashing;
+    bool isSliding;
+
     Rigidbody rb;
 
     private void Start()
@@ -86,13 +95,20 @@ public class PlayerMovement : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         rb.freezeRotation = true;
 
+        startScaleY = transform.localScale.y;
+
         state = PlayerState.walking;
 
+        // TODO: Revise initial definitions, they may be redundant
+        isJumping = false;
         isAbleToJump = true;
 
         isDashing = false;
         isDashOnCooldown = false;
         dashesLeft = maxDashes;
+
+        isSliding = false;
+        isAbleToSlide = true;
     }
 
     private void FixedUpdate()
@@ -102,16 +118,16 @@ public class PlayerMovement : MonoBehaviour
 
     private void Update()
     {
-        bool hasTargetMoveSpeedChanged = targetMoveSpeed != lastTargetMoveSpeed;
+        if (lastState == PlayerState.dashing || lastState == PlayerState.sliding)
+            keepMomentum = true;
 
-        if (lastState == PlayerState.dashing) keepMomentum = true;
-
-        if (hasTargetMoveSpeedChanged)
+        // Handling speed changes based on whether momentum has to be kept or not
+        if (targetMoveSpeed != lastTargetMoveSpeed)
         {
-            StopCoroutine(changeMoveSpeedSmoothly());
+            StopCoroutine(ChangeMoveSpeedSmoothly());
 
             if (keepMomentum)
-                StartCoroutine(changeMoveSpeedSmoothly());
+                StartCoroutine(ChangeMoveSpeedSmoothly());
             else
                 moveSpeed = targetMoveSpeed;
         }
@@ -119,23 +135,36 @@ public class PlayerMovement : MonoBehaviour
 
         lastTargetMoveSpeed = targetMoveSpeed;
         lastState = state;
+        wasOnGround = isOnGround;
+
+        // TODO: Consider getting 'playerHeight' value *directly* if this will cause issues
+        float maxGroundDistance = playerHeight * 0.5f + 0.2f;
+        isOnGround = Physics.Raycast(transform.position, Vector3.down, maxGroundDistance, groundLayer);
+
+        if (isOnGround && !wasOnGround) 
+            isJumping = false;
+
+        // Apply friction
+        if (isOnGround && state != PlayerState.dashing)
+            rb.drag = groundDrag;
+        else
+            rb.drag = 0;
 
         HandleState();
         HandleInput();
 
         LimitSpeed();
 
-        // Apply friction
-        if (state == PlayerState.walking)
-            rb.drag = groundDrag;
-        else
-            rb.drag = 0;
+        float currentSpeed = new Vector3(rb.velocity.x, rb.velocity.y, rb.velocity.z).magnitude;
 
         // Debug info
         print(
             "State: " + state + " // " +
             "Dashes: " + dashesLeft + "/" + maxDashes + " // " +
-            "Speed: " + new Vector3(rb.velocity.x, rb.velocity.y, rb.velocity.z).magnitude
+            "Speed: " + currentSpeed + " // " +
+            "isJumping: " + isJumping + " // " +
+            "isDashing: " + isDashing + " // " +
+            "isSliding: " + isSliding
         );
     }
 
@@ -147,31 +176,46 @@ public class PlayerMovement : MonoBehaviour
         // These are short actions rather than states, so we handle then separately
         if (Input.GetKey(jumpKey) && isAbleToJump && isOnGround)
         {
-            isAbleToJump = false;
+            // Sliding needs to be interrupted in order to jump properly
+            if (state == PlayerState.sliding)
+                InterruptSlide();
 
+            isJumping = true;
             Jump();
+
+            isAbleToJump = false;
 
             Invoke(nameof(FinishJumpCooldown), jumpCooldown);
         }
 
         if (Input.GetKey(dashKey) && IsAbleToDash())
         {
+            // Sliding needs to be interrupted in order to dash properly
+            if (state == PlayerState.sliding)
+                InterruptSlide();
+
+            isDashing = true;
+            Dash();
+
             dashesLeft--;
             isDashOnCooldown = true;
-            isDashing = true;
-
-            Dash();
 
             Invoke(nameof(FinishDashCooldown), dashUseCooldown);
             Invoke(nameof(RestoreDash), dashRestoreTime);
         }
+
+        if (Input.GetKey(slideKey) && isAbleToSlide)
+        {
+            isSliding = true;
+            Slide();
+        }
+        else if (Input.GetKeyUp(slideKey) && state == PlayerState.sliding)
+            StopSlide();
     }
 
     private void HandleState()
     {
-        float maxGroundDistance = playerHeight * 0.5f + 0.2f;
-        isOnGround = Physics.Raycast(transform.position, Vector3.down, maxGroundDistance, groundLayer);
-
+        // Dashing state
         if (isDashing)
         {
             state = PlayerState.dashing;
@@ -179,21 +223,36 @@ public class PlayerMovement : MonoBehaviour
             speedChangeFactor = dashSpeedChangeFactor;
         }
 
-        else if (isOnGround && Input.GetKey(slideKey))
+        // Sliding state
+        else if (isSliding)
         {
             state = PlayerState.sliding;
             targetMoveSpeed = slidingSpeed;
+            speedChangeFactor = slideSpeedChangeFactor;
         }
 
-        else if (isOnGround)
+        // Walking state
+        else if (isOnGround && !isJumping)//(isOnGround && !isJumping) || (isOnGround && !wasOnGround))
         {
             state = PlayerState.walking;
             targetMoveSpeed = walkingSpeed;
+
+            isJumping = false;
+
+            // Restore the ability to slide after interrupting it in order to jump/dash
+            isAbleToSlide = true;
+        }
+        
+        // Airborne state
+        else if (!isOnGround)
+        {   
+            state = PlayerState.airborne;
         }
 
-        else if (!isOnGround)
+        // Debug case
+        else
         {
-            state = PlayerState.airborne;
+            print("Watch out!");
         }
     }
 
@@ -201,11 +260,19 @@ public class PlayerMovement : MonoBehaviour
     {
         moveDirection = orientation.forward * verticalInput + orientation.right * horizontalInput;
 
-        if (state == PlayerState.walking)
+        /*
+        if (state == PlayerState.walking || state == PlayerState.sliding)
             rb.AddForce(moveDirection.normalized * moveSpeed * 10f, ForceMode.Force);
-        else if (state == PlayerState.airborne)
+        else if (!isOnGround)
             // Apply airborne bonus to the speed if necessary
             rb.AddForce(moveDirection.normalized * moveSpeed * 10f * airMultiplier, ForceMode.Force);
+        */
+
+        rb.AddForce(moveDirection.normalized * moveSpeed * 10f, ForceMode.Force);
+
+        // Apply airborne bonus to the speed if necessary
+        if (!isOnGround)
+            rb.AddForce(airMultiplier * 10f * moveSpeed * moveDirection.normalized, ForceMode.Force);
     }
 
     private void LimitSpeed()
@@ -221,7 +288,7 @@ public class PlayerMovement : MonoBehaviour
     }
 
     // TODO: Get good at math
-    private IEnumerator changeMoveSpeedSmoothly()
+    private IEnumerator ChangeMoveSpeedSmoothly()
     {
         float time = 0;
         float diff = Mathf.Abs(targetMoveSpeed - moveSpeed);
@@ -259,11 +326,11 @@ public class PlayerMovement : MonoBehaviour
 
         calculatedDashForce = moveDirection.normalized * dashDirectionForce;
 
-        Invoke(nameof(ApplyDelayedDashForce), 0.025f);
+        Invoke(nameof(ApplyDashForce), 0.025f);
         Invoke(nameof(StopDash), dashDuration);
     }
 
-    private void ApplyDelayedDashForce()
+    private void ApplyDashForce()
     {
         rb.AddForce(calculatedDashForce, ForceMode.Impulse);
     }
@@ -290,6 +357,29 @@ public class PlayerMovement : MonoBehaviour
 
     private void Slide()
     {
-        // Crouch + apply higher speed
+        transform.localScale = new Vector3(
+                transform.localScale.x,
+                slideScaleY,
+                transform.localScale.z
+            );
+
+        rb.AddForce(Vector3.down * 0.5f, ForceMode.Impulse);
+    }
+
+    private void StopSlide()
+    {
+        isSliding = false;
+
+        transform.localScale = new Vector3(
+                transform.localScale.x,
+                startScaleY,
+                transform.localScale.z
+            );
+    }
+
+    private void InterruptSlide()
+    {
+        isAbleToSlide = false;
+        StopSlide();
     }
 }
