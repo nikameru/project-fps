@@ -322,7 +322,10 @@ public class PlayerMovement : MonoBehaviour
 
     private void Dash()
     {
-        moveDirection = orientation.forward * verticalInput + orientation.right * horizontalInput;
+        if (verticalInput != 0 && horizontalInput != 0)
+            moveDirection = orientation.forward * verticalInput + orientation.right * horizontalInput;
+        else
+            moveDirection = orientation.forward;
 
         calculatedDashForce = moveDirection.normalized * dashDirectionForce;
 
