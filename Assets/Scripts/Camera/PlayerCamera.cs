@@ -1,14 +1,16 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
+
+// TODO: put this script on the container itself?
 
 public class PlayerCamera : MonoBehaviour
 {
     public float sensitivityX, sensitivityY;
+    public Transform playerOrientation;
 
-    public Transform orientation;
+    // Container that holds the camera along with the other things linked to it
+    public GameObject container;
 
-    float xRotation, yRotation;
+    private float xRotation, yRotation;
 
     private void Start()
     {
@@ -18,15 +20,17 @@ public class PlayerCamera : MonoBehaviour
 
     private void Update()
     {
-        float mouseX = Input.GetAxisRaw("Mouse X") * Time.deltaTime * sensitivityX;
-        float mouseY = Input.GetAxisRaw("Mouse Y") * Time.deltaTime * sensitivityY;
+        float mouseInputX = Input.GetAxisRaw("Mouse X") * Time.deltaTime * sensitivityX;
+        float mouseInputY = Input.GetAxisRaw("Mouse Y") * Time.deltaTime * sensitivityY;
 
-        xRotation -= mouseY;
-        yRotation += mouseX;
+        xRotation -= mouseInputY;
+        yRotation += mouseInputX;
 
         xRotation = Mathf.Clamp(xRotation, -90f, 90f);
 
-        transform.rotation = Quaternion.Euler(xRotation, yRotation, 0);
-        orientation.rotation = Quaternion.Euler(0, yRotation, 0);
+        // Rotate the camera container (along with the weapon, etc.)
+        container.transform.rotation = Quaternion.Euler(xRotation, yRotation, 0);
+        // Change player orientation
+        playerOrientation.rotation = Quaternion.Euler(0, yRotation, 0);
     }
 }

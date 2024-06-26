@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
 public class PlayerMovement : MonoBehaviour
@@ -7,20 +6,27 @@ public class PlayerMovement : MonoBehaviour
     [Header("References")]
     public Transform orientation;
 
-    [Header("Walking")]
-    public float walkingSpeed;
-
+    [Header("General Parameters")]
     // Defines ground friction
     public float groundDrag;
+    // Speed multiplier for the 'airborne' state
+    public float airMultiplier;
+
+    [Header("Walking")]
+    public float walkingSpeed;
 
     [Header("Jumping")]
     public float jumpForce;
     public float jumpCooldown;
 
-    // Speed multiplier for the 'airborne' state
-    public float airMultiplier;
-
     private bool isAbleToJump;
+
+    [Header("Wall Jumping")]
+    public float wallJumpForce;
+
+    public int maxWallJumps;
+
+    private int wallJumpsLeft;
 
     [Header("Dashing")]
     public float dashingSpeed;
@@ -33,7 +39,6 @@ public class PlayerMovement : MonoBehaviour
 
     public int maxDashes;
 
-    // Indicates how many dashes can be performed
     private int dashesLeft;
     private bool isDashOnCooldown;
 
@@ -55,9 +60,12 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Ground Check")]
     public float playerHeight;
-    public LayerMask groundLayer;
 
-    float horizontalInput, verticalInput;
+    [Header("Layer Masks")]
+    public LayerMask groundLayer;
+    public LayerMask wallLayer;
+
+    private float horizontalInput, verticalInput;
 
     Vector3 moveDirection;
 
@@ -82,11 +90,16 @@ public class PlayerMovement : MonoBehaviour
 
     public PlayerState state;
 
-    bool isOnGround;
-    bool wasOnGround;
-    bool isJumping;
-    bool isDashing;
-    bool isSliding;
+    private float maxGroundDistance;
+
+    private bool isOnGround;
+    private bool wasOnGround;
+
+    private bool isTouchingWall;
+
+    private bool isJumping;
+    private bool isDashing;
+    private bool isSliding;
 
     Rigidbody rb;
 
@@ -99,9 +112,16 @@ public class PlayerMovement : MonoBehaviour
 
         state = PlayerState.walking;
 
+        wasOnGround = false;
+
+        // TODO: Consider getting 'playerHeight' value *directly* if this will cause issues
+        maxGroundDistance = playerHeight * 0.5f + 0.2f;
+
         // TODO: Revise initial definitions, they may be redundant
         isJumping = false;
         isAbleToJump = true;
+
+        wallJumpsLeft = maxWallJumps;
 
         isDashing = false;
         isDashOnCooldown = false;
@@ -137,9 +157,24 @@ public class PlayerMovement : MonoBehaviour
         lastState = state;
         wasOnGround = isOnGround;
 
-        // TODO: Consider getting 'playerHeight' value *directly* if this will cause issues
-        float maxGroundDistance = playerHeight * 0.5f + 0.2f;
-        isOnGround = Physics.Raycast(transform.position, Vector3.down, maxGroundDistance, groundLayer);
+        isOnGround = Physics.Raycast(
+                    transform.position,
+                    Vector3.down,
+                    playerHeight * 0.5f + 0.2f,
+                    groundLayer
+                );
+
+        /*
+        isTouchingWall = Physics.Raycast(
+                    transform.position,
+                    Vector3.forward,
+                    1000f,
+                    wallLayer
+                );
+        */
+
+        if (isOnGround)
+            wallJumpsLeft = maxWallJumps;
 
         if (isOnGround && !wasOnGround) 
             isJumping = false;
@@ -155,17 +190,18 @@ public class PlayerMovement : MonoBehaviour
 
         LimitSpeed();
 
+        // Debug info
         float currentSpeed = new Vector3(rb.velocity.x, rb.velocity.y, rb.velocity.z).magnitude;
 
-        // Debug info
         print(
             "State: " + state + " // " +
             "Dashes: " + dashesLeft + "/" + maxDashes + " // " +
             "Speed: " + currentSpeed + " // " +
             "isJumping: " + isJumping + " // " +
             "isDashing: " + isDashing + " // " +
-            "isSliding: " + isSliding
-        );
+            "isSliding: " + isSliding + " // " +
+            "isTouchingWall: " + isTouchingWall
+         );
     }
 
     private void HandleInput()
@@ -174,21 +210,37 @@ public class PlayerMovement : MonoBehaviour
         verticalInput = Input.GetAxisRaw("Vertical");
 
         // These are short actions rather than states, so we handle then separately
-        if (Input.GetKey(jumpKey) && isAbleToJump && isOnGround)
+
+        if (Input.GetKey(jumpKey))
         {
-            // Sliding needs to be interrupted in order to jump properly
-            if (state == PlayerState.sliding)
-                InterruptSlide();
+            // Regular jump
+            if (isAbleToJump && isOnGround)
+            {
+                // Sliding needs to be interrupted in order to jump properly
+                if (state == PlayerState.sliding)
+                    InterruptSlide();
 
-            isJumping = true;
-            Jump();
+                isJumping = true;
+                Jump();
 
-            isAbleToJump = false;
+                isAbleToJump = false;
 
-            Invoke(nameof(FinishJumpCooldown), jumpCooldown);
+                Invoke(nameof(FinishJumpCooldown), jumpCooldown);
+            }
+
+            // Wall jump
+            /*
+            else if (isTouchingWall && !isOnGround && wallJumpsLeft > 0)
+            {
+                isJumping = true;
+                WallJump();
+
+                wallJumpsLeft--;
+            }
+            */
         }
 
-        if (Input.GetKey(dashKey) && IsAbleToDash())
+        if (Input.GetKey(dashKey) && dashesLeft > 0 && !isDashOnCooldown)
         {
             // Sliding needs to be interrupted in order to dash properly
             if (state == PlayerState.sliding)
@@ -232,7 +284,7 @@ public class PlayerMovement : MonoBehaviour
         }
 
         // Walking state
-        else if (isOnGround && !isJumping)//(isOnGround && !isJumping) || (isOnGround && !wasOnGround))
+        else if (isOnGround && !isJumping)
         {
             state = PlayerState.walking;
             targetMoveSpeed = walkingSpeed;
@@ -241,7 +293,7 @@ public class PlayerMovement : MonoBehaviour
 
             // Restore the ability to slide after interrupting it in order to jump/dash
             isAbleToSlide = true;
-        }
+        } 
         
         // Airborne state
         else if (!isOnGround)
@@ -260,19 +312,13 @@ public class PlayerMovement : MonoBehaviour
     {
         moveDirection = orientation.forward * verticalInput + orientation.right * horizontalInput;
 
-        /*
-        if (state == PlayerState.walking || state == PlayerState.sliding)
-            rb.AddForce(moveDirection.normalized * moveSpeed * 10f, ForceMode.Force);
-        else if (!isOnGround)
-            // Apply airborne bonus to the speed if necessary
-            rb.AddForce(moveDirection.normalized * moveSpeed * 10f * airMultiplier, ForceMode.Force);
-        */
+        Vector3 moveForce = 10f * moveSpeed * moveDirection.normalized;
 
-        rb.AddForce(moveDirection.normalized * moveSpeed * 10f, ForceMode.Force);
+        rb.AddForce(moveForce, ForceMode.Force);
 
         // Apply airborne bonus to the speed if necessary
         if (!isOnGround)
-            rb.AddForce(airMultiplier * 10f * moveSpeed * moveDirection.normalized, ForceMode.Force);
+            rb.AddForce(moveForce * airMultiplier, ForceMode.Force);
     }
 
     private void LimitSpeed()
@@ -320,6 +366,13 @@ public class PlayerMovement : MonoBehaviour
         isAbleToJump = true;
     }
 
+    private void WallJump()
+    {
+        rb.velocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+        
+        rb.AddForce((transform.up) * wallJumpForce, ForceMode.Impulse);
+    }
+
     private void Dash()
     {
         if (verticalInput != 0 && horizontalInput != 0)
@@ -341,11 +394,6 @@ public class PlayerMovement : MonoBehaviour
     private void StopDash()
     {
         isDashing = false;
-    }
-
-    private bool IsAbleToDash()
-    {
-        return dashesLeft > 0 && isDashOnCooldown == false;
     }
 
     private void FinishDashCooldown()
