@@ -1,7 +1,5 @@
 using UnityEngine;
 
-// TODO: put this script on the container itself?
-
 public class PlayerCamera : MonoBehaviour
 {
     public float sensitivityX, sensitivityY;
@@ -10,7 +8,7 @@ public class PlayerCamera : MonoBehaviour
     // Container that holds the camera along with the other things linked to it
     public GameObject container;
 
-    private float xRotation, yRotation;
+    private float _xRotation, _yRotation;
 
     private void Start()
     {
@@ -23,14 +21,14 @@ public class PlayerCamera : MonoBehaviour
         float mouseInputX = Input.GetAxisRaw("Mouse X") * Time.deltaTime * sensitivityX;
         float mouseInputY = Input.GetAxisRaw("Mouse Y") * Time.deltaTime * sensitivityY;
 
-        xRotation -= mouseInputY;
-        yRotation += mouseInputX;
+        _xRotation -= mouseInputY;
+        _yRotation += mouseInputX;
 
-        xRotation = Mathf.Clamp(xRotation, -90f, 90f);
+        _xRotation = Mathf.Clamp(_xRotation, -90f, 90f);
 
         // Rotate the camera container (along with the weapon, etc.)
-        container.transform.rotation = Quaternion.Euler(xRotation, yRotation, 0);
+        container.transform.rotation = Quaternion.Euler(_xRotation, _yRotation, 0);
         // Change player orientation
-        playerOrientation.rotation = Quaternion.Euler(0, yRotation, 0);
+        playerOrientation.rotation = Quaternion.Euler(0, _yRotation, 0);
     }
 }
